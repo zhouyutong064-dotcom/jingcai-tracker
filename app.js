@@ -369,10 +369,9 @@ async function testConn() {
       path: $('#sPath').value.trim() || 'data.json',
       branch: $('#sBranch').value.trim() || 'main',
     });
-    const d = await Store.ghLoad();
-    if (!d || !Array.isArray(d.records)) throw new Error('文件格式不对，缺少 records 字段');
-    $('#setupMsg').className = 'setup-msg ok';
-    $('#setupMsg').textContent = `连接成功！仓库里已有 ${d.records.length} 条记录。`;
+    const d = await Store.diagnose();
+    $('#setupMsg').className = d.ok ? 'setup-msg ok' : 'setup-msg err';
+    $('#setupMsg').textContent = d.msg;
   } catch (e) {
     $('#setupMsg').className = 'setup-msg err';
     $('#setupMsg').textContent = '连接失败：' + e.message;

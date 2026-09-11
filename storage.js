@@ -137,6 +137,83 @@ const Store = {
     return r.status === 204 ? null : r.json();
   },
 
+  /* 不抛错的原始请求，用于分步诊断 */
+  async ghRaw(path) {
+    try {
+      const r = await fetch(GH_API + path, {
+        headers: {
+          Authorization: 'Bearer ' + this.cfg.token,
+          Accept: 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+      });
+      let json = null;
+      try { json = await r.json(); } catch (e) {}
+      return { status: r.status, json };
+    } catch (e) {
+      return { status: 0, json: null, error: e };
+    }
+  },
+
+  /* 逐步诊断连接问题，返回 {ok, msg, count} */
+  async diagnose() {
+    const c = this.cfg;
+    if (!c.token) return { ok: false, msg: '还没有填令牌' };
+    if (!c.owner) return { ok: false, msg: '还没有填 GitHub 用户名' };
+    if (!c.repo) return { ok: false, msg: '还没有填数据仓库名' };
+
+    // 1. 用户名
+    const u = await this.ghRaw('/users/' + c.owner);
+    if (u.status === 404) {
+      return { ok: false, msg: `用户名 "${c.owner}" 在 GitHub 上不存在，请检查拼写（注意横杠和数字）` };
+    }
+    if (u.status === 0) {
+      return { ok: false, msg: '连不上 GitHub，请检查网络后重试' };
+    }
+
+    // 2. 仓库（带令牌查）
+    const r = await this.ghRaw(`/repos/${c.owner}/${c.repo}`);
+    if (r.status === 401) return { ok: false, msg: '令牌无效或已过期，请重新生成并粘贴' };
+    if (r.status === 404) {
+      // 匿名再查一次，区分"仓库不存在"和"令牌没授权"
+      try {
+        const anon = await fetch(`${GH_API}/repos/${c.owner}/${c.repo}`);
+        if (anon.status === 200) {
+          return { ok: false, msg: `仓库 ${c.owner}/${c.repo} 存在，但你的令牌访问不了它 —— 令牌没有授权这个仓库。去令牌设置里确认 Repository access 勾选了它（私有仓库必须在 Only select repositories 里选中）` };
+        }
+      } catch (e) {}
+      return { ok: false, msg: `找不到仓库 ${c.owner}/${c.repo}。请在浏览器打开 github.com/${c.owner}/${c.repo} 确认：① 仓库已创建 ② 名字一字不差 ③ 若能打开，说明是令牌没授权它` };
+    }
+
+    // 3. 文件
+    const f = await this.ghRaw(`/repos/${c.owner}/${c.repo}/contents/${c.path}?ref=${c.branch}`);
+    if (f.status === 404) {
+      const defBr = (r.json && r.json.default_branch) || 'main';
+      if (defBr !== c.branch) {
+        return { ok: false, msg: `分支名不对：这个仓库的默认分支是 "${defBr}"，你填的是 "${c.branch}"。把"分支"一栏改成 ${defBr} 再试` };
+      }
+      return { ok: false, msg: `仓库在，但里面还没有 ${c.path}。请进入 jingcai-data 仓库 → Add file → Upload files → 把桌面部署文件夹里的 data.json 传上去` };
+    }
+    if (f.status === 403) {
+      return { ok: false, msg: '令牌权限不够：生成令牌时 Permissions → Contents 必须设为 Read and write，去令牌设置里补上' };
+    }
+    if (f.status !== 200) {
+      return { ok: false, msg: `读取 ${c.path} 失败（HTTP ${f.status}）：${(f.json && f.json.message) || '未知错误'}` };
+    }
+
+    // 4. 内容校验
+    let parsed;
+    try {
+      parsed = JSON.parse(b64decode(f.json.content));
+    } catch (e) {
+      return { ok: false, msg: 'data.json 的内容不是有效 JSON，请确认上传的是桌面「竞彩台账部署文件」里的原始文件，没被记事本改动过' };
+    }
+    if (!parsed || !Array.isArray(parsed.records)) {
+      return { ok: false, msg: 'data.json 格式不对：缺少 records 字段。请确认上传的是桌面「竞彩台账部署文件」文件夹里的那份' };
+    }
+    return { ok: true, msg: `一切正常！仓库里已有 ${parsed.records.length} 条记录`, count: parsed.records.length };
+  },
+
   async ghLoad() {
     const p = `/repos/${this.cfg.owner}/${this.cfg.repo}/contents/${this.cfg.path}?ref=${this.cfg.branch}`;
     const j = await this.gh(p);
