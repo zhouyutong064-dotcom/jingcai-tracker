@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>竞彩台账 · 投注记录看板</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="logo">竞</div>
+    <div>
+      <h1>竞彩台账</h1>
+      <p class="sub">投注记录与收益看板 <span id="dataDate" class="chip"></span></p>
+    </div>
+  </div>
+  <div class="dbbadge" id="dbBadge" title="点击查看数据库详情">
+    <span class="dot"></span>
+    <div class="dbbadge-txt">
+      <strong>数据库已连接</strong>
+      <small id="dbBadgePath">SQLite · data/app.db</small>
+    </div>
+  </div>
+</header>
+
+<main>
+  <!-- 汇总卡片 -->
+  <section class="cards" id="cards"></section>
+
+  <!-- 图表 -->
+  <section class="grid-2">
+    <div class="panel">
+      <div class="panel-hd">
+        <h2>每日净收益</h2>
+        <span class="hint">红=盈利 · 绿=亏损</span>
+      </div>
+      <div class="chart-wrap"><div id="chartDaily" class="chart"></div></div>
+    </div>
+    <div class="panel">
+      <div class="panel-hd">
+        <h2>各板块表现</h2>
+        <span class="hint">投注 / 中奖 / 净收益</span>
+      </div>
+      <div class="chart-wrap"><div id="chartTab" class="chart"></div></div>
+    </div>
+  </section>
+
+  <!-- 明细 -->
+  <section class="panel">
+    <div class="panel-hd">
+      <div class="tabs" id="tabs"></div>
+      <div class="actions">
+        <button class="btn ghost" id="btnExport">导出 CSV</button>
+        <button class="btn ghost no-snapshot" id="btnSnapshot" title="导出一个数据已内嵌的单文件网页">导出静态网页</button>
+        <button class="btn ghost" id="btnSetup" title="配置数据存放位置">数据源设置</button>
+        <button class="btn primary no-snapshot" id="btnAdd">+ 新增记录</button>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table id="table">
+        <thead>
+          <tr>
+            <th style="width:110px">日期</th>
+            <th>内容</th>
+            <th style="width:100px" class="num">金额</th>
+            <th style="width:100px" class="num">奖金</th>
+            <th style="width:110px" class="num">收益</th>
+            <th style="width:90px" class="col-act"></th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+    <div class="tfoot" id="tfoot"></div>
+  </section>
+
+  <!-- 数据库说明 -->
+  <section class="panel dbpanel" id="dbPanel">
+    <div class="panel-hd"><h2>数据库在哪？</h2></div>
+    <div class="dbgrid" id="dbGrid"></div>
+    <div class="note" id="dbNote"></div>
+  </section>
+</main>
+
+<!-- 新增/编辑弹窗 -->
+<div class="modal" id="modal">
+  <div class="modal-box">
+    <h3 id="modalTitle">新增记录</h3>
+    <form id="form">
+      <label>板块
+        <select name="tab" id="fTab"></select>
+      </label>
+      <label>日期
+        <input type="date" name="date" id="fDate">
+      </label>
+      <label>内容
+        <textarea name="content" id="fContent" rows="3" placeholder="如：006让胜+007让负"></textarea>
+      </label>
+      <div class="row3">
+        <label>金额<input type="number" step="0.01" name="amount" id="fAmount" placeholder="0"></label>
+        <label>奖金<input type="number" step="0.01" name="bonus" id="fBonus" placeholder="0"></label>
+        <label>收益<input type="number" step="0.01" name="profit" id="fProfit" placeholder="自动计算"></label>
+      </div>
+      <p class="tip">收益留空则自动按「奖金 − 金额」计算</p>
+      <div class="modal-ft">
+        <button type="button" class="btn ghost" id="btnCancel">取消</button>
+        <button type="submit" class="btn primary">保存</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- 数据源设置弹窗 -->
+<div class="modal" id="setup">
+  <div class="modal-box wide">
+    <h3>数据源设置</h3>
+    <p class="setup-msg" id="setupMsg"></p>
+
+    <fieldset>
+      <legend>数据存放位置</legend>
+      <label>GitHub 用户名 / 组织
+        <input id="sOwner" placeholder="例如 zhangsan" autocomplete="off">
+      </label>
+      <label>数据仓库名（<b>务必设为 Private</b>）
+        <input id="sRepo" placeholder="例如 jingcai-data" autocomplete="off">
+      </label>
+      <div class="row2">
+        <label>数据文件名
+          <input id="sPath" placeholder="data.json">
+        </label>
+        <label>分支
+          <input id="sBranch" placeholder="main">
+        </label>
+      </div>
+      <label>访问令牌（Personal Access Token）
+        <input id="sToken" type="password" placeholder="github_pat_... 或 ghp_..." autocomplete="off">
+        <small>令牌只保存在本机浏览器里。需要对该私有仓库有 <b>读写</b> 权限（Contents: Read and write）。</small>
+      </label>
+      <div class="setup-ft">
+        <button class="btn ghost" id="btnTest">测试连接</button>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>本金</legend>
+      <div class="row2">
+        <label>本金金额
+          <input id="sCapital" type="number" step="0.01" placeholder="1700">
+        </label>
+        <div class="setup-ft">
+          <button class="btn ghost" id="btnSaveCapital">保存本金</button>
+        </div>
+      </div>
+    </fieldset>
+
+    <div class="modal-ft">
+      <button class="btn ghost danger" id="btnClearCfg">清除本机配置</button>
+      <span style="flex:1"></span>
+      <button class="btn ghost" id="btnCancelSetup">取消</button>
+      <button class="btn primary" id="btnSaveSetup">保存并连接</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="storage.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
