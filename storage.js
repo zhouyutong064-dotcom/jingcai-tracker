@@ -71,6 +71,18 @@ function enrich(d) {
 
 const CFG_KEY = 'jc_cfg_v1';
 
+/* 合并两份台账数据：远端先放、本地覆盖（本地是用户最新意图），按 id 去重 */
+function mergeData(local, remote) {
+  if (!local) return remote;
+  if (!remote) return local;
+  const byId = new Map();
+  for (const r of (Array.isArray(remote.records) ? remote.records : [])) byId.set(r.id, r);
+  for (const r of (Array.isArray(local.records) ? local.records : [])) byId.set(r.id, r);
+  const records = [...byId.values()].sort((a, b) => (a.id || 0) - (b.id || 0));
+  const meta = { ...(remote.meta || {}), ...(local.meta || {}) };
+  return { ...remote, meta, records, updatedAt: new Date().toISOString() };
+}
+
 const Store = {
   mode: 'server',
   cfg: { token: '', owner: '', repo: '', path: 'data.json', branch: 'main' },
@@ -223,20 +235,58 @@ const Store = {
 
   async ghSave(data) {
     const url = `/repos/${this.cfg.owner}/${this.cfg.repo}/contents/${this.cfg.path}`;
-    let sha = this._sha;
-    if (!sha) {
-      try { sha = (await this.gh(url + `?ref=${this.cfg.branch}`)).sha; }
-      catch (e) { sha = undefined; }
+
+    // 1. 每次保存前都取云端最新状态：多设备同时改也不会 409
+    let latest = null;
+    try { latest = await this.gh(url + `?ref=${this.cfg.branch}`); } catch (e) { latest = null; }
+
+    let sha;
+    let payload = data;
+    this._conflictMerged = false;
+    if (latest && latest.sha) {
+      sha = latest.sha;
+      // 云端版本比内存里的新（别的设备/页面写过）→ 自动合并两边
+      if (this._sha && latest.sha !== this._sha) {
+        let base = null;
+        try { base = JSON.parse(b64decode(latest.content)); } catch (e) {}
+        if (base) {
+          payload = mergeData(data, base);
+          this._conflictMerged = true;
+        }
+      }
     }
+
     const body = {
       message: '更新竞彩台账 ' + new Date().toLocaleString('zh-CN'),
-      content: b64encode(JSON.stringify(data, null, 2)),
+      content: b64encode(JSON.stringify(payload, null, 2)),
       branch: this.cfg.branch,
     };
     if (sha) body.sha = sha;
-    const j = await this.gh(url, { method: 'PUT', body: JSON.stringify(body) });
-    this._sha = j.content.sha;
-    return true;
+
+    try {
+      const j = await this.gh(url, { method: 'PUT', body: JSON.stringify(body) });
+      this._sha = j.content.sha;
+      return true;
+    } catch (e) {
+      // 2. 兜底：极小概率 GET 与 PUT 之间又被写入 → 强制合并重试一次
+      if (!/409/.test(String(e.message))) throw e;
+      const latest2 = await this.gh(url + `?ref=${this.cfg.branch}`);
+      let base2 = null;
+      try { base2 = JSON.parse(b64decode(latest2.content)); } catch (e2) {}
+      const merged = mergeData(data, base2);
+      const j2 = await this.gh(url, {
+        method: 'PUT',
+        body: JSON.stringify({
+          message: '更新竞彩台账（自动合并云端改动） ' + new Date().toLocaleString('zh-CN'),
+          content: b64encode(JSON.stringify(merged, null, 2)),
+          branch: this.cfg.branch,
+          sha: latest2.sha,
+        }),
+      });
+      this._sha = j2.content.sha;
+      this._conflictMerged = true;
+      return true;
+    }
   },
 
   /* ---------- 统一读取 ---------- */

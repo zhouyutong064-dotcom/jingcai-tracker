@@ -329,7 +329,8 @@ async function save(e) {
   try {
     if (id) await Store.update(Number(id), body);
     else await Store.add(body);
-    closeModal(); await load(); toast(id ? '已保存' : '已新增');
+    closeModal(); await load();
+    toast(Store._conflictMerged ? '已保存（发现其他设备的改动，已自动合并）' : (id ? '已保存' : '已新增'), 3500);
   } catch (err) {
     toast('保存失败：' + err.message, 4000);
   }
@@ -339,7 +340,8 @@ async function del(id) {
   if (!confirm('确定删除这条记录？')) return;
   try {
     await Store.del(id);
-    await load(); toast('已删除');
+    await load();
+    toast(Store._conflictMerged ? '已删除（发现其他设备的改动，已自动合并）' : '已删除', 3500);
   } catch (err) { toast('删除失败：' + err.message, 4000); }
 }
 
